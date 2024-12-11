@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -75,4 +76,17 @@ func (l Ratelimit) RefileTokensNewIp(ip string) {
 		c <- struct{}{}
 	}
 	l.TokensByIp[ip] = c
+}
+
+func (l Ratelimit) HandleRequest(v int, ip string) {
+	if _, ok := l.TokensByIp[ip]; !ok {
+		l.RefileTokensNewIp(ip)
+	}
+
+	select {
+	case <-l.TokensByIp[ip]:
+		fmt.Printf(" \n Request Accepted ip:%s %d\n ", ip, v)
+	default:
+		fmt.Printf("\n Request Denied ip:%s %d\n ", ip, v)
+	}
 }
