@@ -2,44 +2,64 @@ package ratelimit
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
 type LeakyBucketLimitter struct {
 	QueueSize int8
 	MapReset  time.Duration
-	Queue     map[string]chan struct{}
+	Queue     sync.Map
 }
 
-func NewLeakyBucketLimitter(size int8, mapReset time.Duration) LeakyBucketLimitter {
+func NewLeakyBucketLimitter(size int8, mapReset time.Duration) *LeakyBucketLimitter {
 	limitter := LeakyBucketLimitter{
 		QueueSize: size,
 		MapReset:  mapReset,
-		Queue:     make(map[string]chan struct{}),
+		Queue:     sync.Map{},
 	}
 
-	return limitter
+	return &limitter
 }
 
-func (l LeakyBucketLimitter) HandleRequest(id int, ip string) {
-	if _, ok := l.Queue[ip]; !ok {
+func (l *LeakyBucketLimitter) HandleRequest(id int, ip string) {
+	ch, ok := l.isKeyExist(ip)
+	if !ok {
 		l.initIpQueue(ip)
 	}
 
 	select {
-	case <-l.Queue[ip]:
+	case <-ch:
 		fmt.Printf("\nRequest Accepted! %s %d\n", ip, id)
 		time.Sleep(time.Second)
-		l.Queue[ip] <- struct{}{}
+		ch <- struct{}{}
 	default:
 		fmt.Printf("\nRequest Denied! %s %d\n", ip, id)
 	}
 }
 
-func (l LeakyBucketLimitter) initIpQueue(ip string) {
-	l.Queue[ip] = make(chan struct{}, l.QueueSize)
-	fmt.Println(l.QueueSize)
-	for i := 0; i < int(l.QueueSize); i++ {
-		l.Queue[ip] <- struct{}{}
+func (l *LeakyBucketLimitter) initIpQueue(ip string) {
+	l.Queue.Store(ip, make(chan struct{}, l.QueueSize))
+	ch, ok := l.isKeyExist(ip)
+	if !ok {
+		return
 	}
+
+	for i := 0; i < int(l.QueueSize); i++ {
+		ch <- struct{}{}
+	}
+}
+
+func (l *LeakyBucketLimitter) isKeyExist(key string) (chan struct{}, bool) {
+	v, ok := l.Queue.Load(key)
+	if !ok {
+		return nil, false
+	}
+
+	ch, ok := v.(chan struct{})
+	if !ok {
+		fmt.Println("Error: Invalid channel type")
+		return nil, false
+	}
+	return ch, true
 }

@@ -2,11 +2,12 @@ package ratelimit
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
 type Ratelimit struct {
-	TokensByIp   map[string]chan struct{}
+	TokensByIp   sync.Map
 	RefileRate   time.Duration
 	RefileCount  int
 	Stop         chan struct{}
@@ -14,9 +15,10 @@ type Ratelimit struct {
 	TruncateTime time.Duration
 }
 
-func NewTokenRateLimitter(capacity int) Ratelimit {
-	limitter := Ratelimit{
-		TokensByIp:   make(map[string]chan struct{}, capacity),
+func NewTokenRateLimitter(capacity int) *Ratelimit {
+	limitter := &Ratelimit{
+		// TokensByIp:   make(map[string]chan struct{}, capacity),
+		TokensByIp:   sync.Map{},
 		RefileRate:   time.Duration(time.Second),
 		RefileCount:  2,
 		Stop:         make(chan struct{}),
@@ -29,62 +31,75 @@ func NewTokenRateLimitter(capacity int) Ratelimit {
 
 	return limitter
 }
-
-func (l Ratelimit) refileTokens() {
+func (l *Ratelimit) refileTokens() {
 	ticker := time.NewTicker(l.RefileRate)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			for _, ch := range l.TokensByIp {
+			l.TokensByIp.Range(func(k, v interface{}) bool {
+				ch, ok := v.(chan struct{})
+				if !ok {
+					return true
+				}
+
 				for i := 0; i < l.RefileCount; i++ {
 					select {
 					case ch <- struct{}{}:
 					default:
 					}
 				}
-			}
+				return true
+			})
 		case <-l.Stop:
 			return
 		}
-
 	}
 }
 
-func (l Ratelimit) truncateIps() {
+func (l *Ratelimit) truncateIps() {
 	ticker := time.NewTicker(l.TruncateTime)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			for key, c := range l.TokensByIp {
-				select {
-				case c <- struct{}{}:
-				default:
-					delete(l.TokensByIp, key)
+			l.TokensByIp.Range(func(k, v interface{}) bool {
+				ch, ok := v.(chan struct{})
+				if !ok {
+					return false
 				}
-			}
+
+				select {
+				case ch <- struct{}{}:
+				default:
+					l.TokensByIp.Delete(k)
+				}
+				return true
+			})
 		}
 	}
 }
 
-func (l Ratelimit) RefileTokensNewIp(ip string) {
+func (l *Ratelimit) RefileTokensNewIp(ip string) {
 	c := make(chan struct{}, l.Capacity)
 	for i := 0; i < l.Capacity; i++ {
 		c <- struct{}{}
 	}
-	l.TokensByIp[ip] = c
+	l.TokensByIp.Store(ip, c)
 }
 
-func (l Ratelimit) HandleRequest(v int, ip string) {
-	if _, ok := l.TokensByIp[ip]; !ok {
+func (l *Ratelimit) HandleRequest(v int, ip string) {
+	_, ok := l.TokensByIp.Load(ip)
+	if !ok {
 		l.RefileTokensNewIp(ip)
 	}
 
+	ch, _ := l.TokensByIp.Load(ip)
+	chh := ch.(chan struct{})
 	select {
-	case <-l.TokensByIp[ip]:
+	case <-chh:
 		fmt.Printf(" \n Request Accepted ip:%s %d\n ", ip, v)
 	default:
 		fmt.Printf("\n Request Denied ip:%s %d\n ", ip, v)

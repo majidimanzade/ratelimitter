@@ -9,8 +9,8 @@ import (
 
 func main() {
 	// leackyBucketLimitter()
-	//tokenBucketLimitter()
-	slideWindowLimitter()
+	tokenBucketLimitter()
+	// slideWindowLimitter()
 }
 
 func leackyBucketLimitter() {
