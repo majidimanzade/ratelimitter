@@ -1,14 +1,16 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"myproject/ratelimit"
 	"time"
 )
 
 func main() {
-	leackyBucketLimitter()
+	// leackyBucketLimitter()
 	//tokenBucketLimitter()
-
+	slideWindowLimitter()
 }
 
 func leackyBucketLimitter() {
@@ -34,5 +36,22 @@ func tokenBucketLimitter() {
 			limitter.HandleRequest(i, "192.168.1.1")
 		}
 		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+func slideWindowLimitter() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(5*time.Second))
+
+	limitter := ratelimit.NewSlideWindowLimitter(2, 5)
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Session Expired!")
+			return
+		default:
+			limitter.HandleRequest("192.168.1.1")
+			time.Sleep(200 * time.Millisecond)
+		}
 	}
 }
